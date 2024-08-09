@@ -1,85 +1,125 @@
+name: build
 
-name: Build
-
-on:
-  push:
-    branches: [ '**' ]
-    tags-ignore: [ '**' ]
-  pull_request:
-    branches: [ main ]
+on: [push, pull_request]
 
 jobs:
+
   build:
-    name: Build
+
     runs-on: ${{ matrix.os }}
 
     strategy:
-      matrix:
-        os: [ macos-latest, ubuntu-latest, windows-latest ]
 
-    steps:
-      - name: Clone Git repository
-        uses: actions/checkout@v4
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: latest
-
-      - name: Install Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.x
-
-      - name: Install Packages
-        run: npm run install
-
-      - name: Validate
-        run: npm run validate
-
-      - name: Build Python Server
-        run: npm run build python
-
-      - name: Build Electron
-        shell: bash
-        run: |
-          npx electron-builder install-app-deps
-          case "${{ matrix.os }}" in
-            macos*)
-              CSC_IDENTITY_AUTO_DISCOVERY=false npx electron-builder --mac --universal --publish never -c.mac.identity=null
-              ;;
-            ubuntu*)
-              npx electron-builder --linux appimage --x64 --publish never
-              npx electron-builder --linux snap --x64 --publish never
-              ;;
-            windows*)
-              npx electron-builder --win --x64 --arm64 --publish never
-              ;;
-          esac
-
-  analyze:
-    name: Analyze
-    runs-on: ubuntu-latest
-
-    permissions:
-      security-events: write
-
-    strategy:
       fail-fast: false
+
       matrix:
-        language: [ 'javascript', 'python' ]
+
+        os: [windows-latest]
+
+        build_type: [Release]
+
+        enable_ui: [on]
+
+        include:
+
+          - os: windows-latest
+
+            build_type: Release
+
+            enable_ui: on
 
     steps:
-      - name: Clone Git repository
-        uses: actions/checkout@v4
 
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: ${{ matrix.language }}
+    - uses: actions/checkout@v3
 
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+      with:
 
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        submodules: 'recursive'
+
+    - name: ccache
+
+      uses: hendrikmuhs/ccache-action@v1
+
+      if: runner.os == 'Linux'
+
+      with:
+
+        key: ${{ matrix.os }}-${{ matrix.enable_ui }}
+
+    - uses: seanmiddleditch/gha-setup-ninja@master
+
+    - uses: ilammy/msvc-dev-cmd@v1
+
+      if: runner.os == 'Windows'
+
+    - name: Install Dependencies
+
+      shell: bash
+
+      run: |
+
+        if [[ "${{ runner.os }}" == "Linux" ]] ; then
+
+          sudo apt-get update -qq
+
+          sudo apt-get install -y \
+
+            libx11-dev libxcursor-dev libxi-dev
+
+        fi
+
+    - name: Generating Makefiles
+
+      shell: bash
+
+      run: |
+
+        if [[ "${{ runner.os }}" == "Windows" ]] ; then
+
+          export enable_ccache=off
+
+        else
+
+          export enable_ccache=on
+
+        fi
+
+        curl -L https://github.com/blueloveTH/aseprite/releases/download/v0.01/skia.zip --output skia.zip
+
+        7z x skia.zip
+
+        cmake -S . -B build -G Ninja \
+
+          -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+
+          -DENABLE_UI=${{ matrix.enable_ui }} \
+
+          -DENABLE_CCACHE=$enable_ccache \
+
+          -DLAF_BACKEND=skia \
+
+          -DSKIA_DIR=./skia \
+
+          -DSKIA_LIBRARY_DIR=./skia/out/Release-x64 \
+
+          -DSKIA_LIBRARY=./skia/out/Release-x64/skia.lib
+
+    - name: Compiling
+
+      shell: bash
+
+      run: |
+
+        cd build && ninja
+
+    - uses: actions/upload-artifact@v3
+
+      with:
+
+        name: aseprite
+
+        path: |
+
+          D:/a/aseprite/aseprite/build/bin/data
+
+          D:/a/aseprite/aseprite/build/bin/aseprite.exe
